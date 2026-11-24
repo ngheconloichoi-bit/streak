@@ -126,6 +126,11 @@ def render(username, days, avatar_rgb=None, out_path=None):
     left = prep_avatar(RIGHT_IMG)
     right = prep_avatar(avatar_rgb if avatar_rgb is not None else letter_avatar(username))
     txt_rgb, txt_a = build_static_layers(username, days)
+    ys, xs = np.where(txt_a[..., 0] > 0)
+    ty0, ty1, tx0, tx1 = ys.min(), ys.max() + 1, xs.min(), xs.max() + 1
+    t_a = txt_a[ty0:ty1, tx0:tx1]
+    t_pre = txt_rgb[ty0:ty1, tx0:tx1].astype(np.float32) * t_a
+    t_inv = 1.0 - t_a
 
     out_path = out_path or tempfile.mktemp(suffix=".mp4")
     tpl = os.path.join(A, "template.mp4")
@@ -136,7 +141,7 @@ def render(username, days, avatar_rgb=None, out_path=None):
     tmp_video = out_path + ".v.mp4"
     enc = subprocess.Popen(
         ["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{W}x{H}",
-         "-r", "30", "-i", "-", "-c:v", "libx264", "-preset", "veryfast", "-crf", "18",
+         "-r", "30", "-i", "-", "-c:v", "libx264", "-preset", "superfast", "-crf", "26", "-threads", "0",
          "-pix_fmt", "yuv420p", "-movflags", "+faststart", tmp_video],
         stdin=subprocess.PIPE)
 
@@ -167,11 +172,14 @@ def render(username, days, avatar_rgb=None, out_path=None):
             base_mask_num = m.astype(bool)
             name_bg = tuple(int(v) for v in np.median(fr[190:250, 560:572].reshape(-1, 3), axis=0))
             cloud_bg = tuple(int(v) for v in np.median(fr[760:780, 130:150].reshape(-1, 3), axis=0))
-            name_mask = cover.astype(bool)
-        fr[name_mask] = name_bg
-        fr[base_mask_num] = cloud_bg
-        # lop chu moi
-        fr = (txt_rgb * txt_a + fr * (1 - txt_a)).astype(np.uint8)
+            nbx0, nby0, nbx1, nby1 = NUM_BOX
+            nbx0 -= 30; nby0 -= 30; nbx1 += 30; nby1 += 30
+            nby1 = min(nby1, H)
+            num_sub = base_mask_num[nby0:nby1, nbx0:nbx1]
+        fr[y0:y1, x0:x1] = name_bg
+        fr[nby0:nby1, nbx0:nbx1][num_sub] = cloud_bg
+        reg = fr[ty0:ty1, tx0:tx1]
+        reg[:] = (t_pre + reg * t_inv).astype(np.uint8)
         # avatar
         tr = TRACK[min(n, len(TRACK) - 1)]
         paste_disk(fr, left, tr["L"][0], tr["L"][1])
